@@ -43,6 +43,7 @@
 
 #define SUPERCALL_KEY_MAX_LEN 0x40
 
+/* [用途] 组装 supercall 协议命令字：高 32 位为版本，低位包含魔数和子命令。 */
 static long ver_and_cmd(long cmd)
 {
     uint32_t ver = (KP_MAJOR << 16) | (KP_MINOR << 8) | KP_PATCH;
@@ -51,41 +52,49 @@ static long ver_and_cmd(long cmd)
 
 /* ---- supercall wrappers ---- */
 
+/* [用途] hello 握手，验证内核 supercall 服务可用。 */
 static long sc_hello(const char *key)
 {
     return syscall(__NR_supercall, key, ver_and_cmd(SUPERCALL_HELLO));
 }
 
+/* [用途] 查询 KernelPatch 版本号。 */
 static uint32_t sc_kp_ver(const char *key)
 {
     return (uint32_t)syscall(__NR_supercall, key, ver_and_cmd(SUPERCALL_KERNELPATCH_VER));
 }
 
+/* [用途] 查询内核版本号（经 supercall 返回）。 */
 static uint32_t sc_k_ver(const char *key)
 {
     return (uint32_t)syscall(__NR_supercall, key, ver_and_cmd(SUPERCALL_KERNEL_VER));
 }
 
+/* [用途] 加载 kpm 模块。 */
 static long sc_kpm_load(const char *key, const char *path, const char *args)
 {
     return syscall(__NR_supercall, key, ver_and_cmd(SUPERCALL_KPM_LOAD), path, args, (void *)0);
 }
 
+/* [用途] 卸载 kpm 模块。 */
 static long sc_kpm_unload(const char *key, const char *name)
 {
     return syscall(__NR_supercall, key, ver_and_cmd(SUPERCALL_KPM_UNLOAD), name, (void *)0);
 }
 
+/* [用途] 查询已加载模块数量。 */
 static long sc_kpm_nums(const char *key)
 {
     return syscall(__NR_supercall, key, ver_and_cmd(SUPERCALL_KPM_NUMS));
 }
 
+/* [用途] 获取已加载模块列表。 */
 static long sc_kpm_list(const char *key, char *buf, int len)
 {
     return syscall(__NR_supercall, key, ver_and_cmd(SUPERCALL_KPM_LIST), buf, len);
 }
 
+/* [用途] 查询指定模块详细信息。 */
 static long sc_kpm_info(const char *key, const char *name, char *buf, int len)
 {
     return syscall(__NR_supercall, key, ver_and_cmd(SUPERCALL_KPM_INFO), name, buf, len);
@@ -93,6 +102,7 @@ static long sc_kpm_info(const char *key, const char *name, char *buf, int len)
 
 /* ---- commands ---- */
 
+/* [用途] 执行 hello 子命令并输出版本信息。 */
 static void cmd_hello(const char *key)
 {
     long ret = sc_hello(key);
@@ -110,6 +120,7 @@ static void cmd_hello(const char *key)
     }
 }
 
+/* [用途] 执行 kpm load 子命令。 */
 static void cmd_kpm_load(const char *key, const char *path, const char *args)
 {
     long ret = sc_kpm_load(key, path, args);
@@ -120,6 +131,7 @@ static void cmd_kpm_load(const char *key, const char *path, const char *args)
     exit(ret != 0);
 }
 
+/* [用途] 执行 kpm unload 子命令。 */
 static void cmd_kpm_unload(const char *key, const char *name)
 {
     long ret = sc_kpm_unload(key, name);
@@ -130,12 +142,14 @@ static void cmd_kpm_unload(const char *key, const char *name)
     exit(ret != 0);
 }
 
+/* [用途] 执行 kpm num 子命令。 */
 static void cmd_kpm_num(const char *key)
 {
     long n = sc_kpm_nums(key);
     printf("%ld\n", n);
 }
 
+/* [用途] 执行 kpm list 子命令。 */
 static void cmd_kpm_list(const char *key)
 {
     char buf[4096] = { 0 };
@@ -148,6 +162,7 @@ static void cmd_kpm_list(const char *key)
         fprintf(stderr, "list failed: %ld (errno=%d)\n", ret, errno);
 }
 
+/* [用途] 执行 kpm info 子命令。 */
 static void cmd_kpm_info(const char *key, const char *name)
 {
     char buf[4096] = { 0 };
@@ -160,6 +175,7 @@ static void cmd_kpm_info(const char *key, const char *name)
 
 /* ---- usage ---- */
 
+/* [用途] 打印 kpm 子命令帮助。 */
 static void usage_kpm(const char *prog)
 {
     fprintf(stderr,
@@ -174,6 +190,7 @@ static void usage_kpm(const char *prog)
         prog);
 }
 
+/* [用途] 打印总帮助。 */
 static void usage(const char *prog)
 {
     fprintf(stderr,
@@ -187,6 +204,7 @@ static void usage(const char *prog)
 
 /* ---- main ---- */
 
+/* [用途] CLI 入口：参数校验 -> 命令分发 -> 子命令执行。 */
 int main(int argc, char **argv)
 {
     if (argc < 3) {

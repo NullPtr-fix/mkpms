@@ -151,7 +151,9 @@ atomic_t wx_in_flight = ATOMIC_INIT(0);
 enum wx_hook_method hook_method = WX_HOOK_METHOD_NONE;
 
 /* Forward declaration for hook callbacks */
+/* [用途] 注册到 debug hook 的 BRK 回调桥接函数。 */
 static int wxshadow_brk_hook_fn(struct pt_regs *regs, unsigned int esr);
+/* [用途] 注册到 debug hook 的 single-step 回调桥接函数。 */
 static int wxshadow_step_hook_fn(struct pt_regs *regs, unsigned int esr);
 
 /* Hook instances for register_user_*_hook API */
@@ -174,6 +176,7 @@ static struct wx_step_hook wxshadow_step_hook = {
  * kfree's the struct when refcount reaches zero.
  * Acquires global_lock internally; safe from any context.
  */
+/* [用途] page 对象引用计数减一并在归零时释放资源。 */
 void wxshadow_page_put(struct wxshadow_page *page)
 {
     int should_free;
@@ -267,6 +270,7 @@ struct wxshadow_page *wxshadow_create_page(void *mm, unsigned long page_addr)
  * Caller must separately release its own ref via wxshadow_page_put().
  * Shadow page memory is freed when the last ref drops.
  */
+/* [用途] 释放 page 结构绑定的 shadow 内存与辅助资源。 */
 void wxshadow_free_page(struct wxshadow_page *page)
 {
     if (!page)
@@ -403,6 +407,7 @@ static bool wxshadow_bitmap_any(const unsigned long *bitmap)
     return false;
 }
 
+/* [用途] 标记 patch 影响范围为 dirty，供重建时最小化更新窗口。 */
 void wxshadow_mark_patch_dirty(struct wxshadow_page *page, unsigned long offset,
                                unsigned long len)
 {
@@ -417,6 +422,7 @@ void wxshadow_mark_patch_dirty(struct wxshadow_page *page, unsigned long offset,
     spin_unlock(&global_lock);
 }
 
+/* [用途] 标记断点位置 dirty，便于后续重建 shadow 指令。 */
 void wxshadow_mark_bp_dirty(struct wxshadow_page *page, unsigned long offset)
 {
     if (!page)
@@ -429,6 +435,7 @@ void wxshadow_mark_bp_dirty(struct wxshadow_page *page, unsigned long offset)
     spin_unlock(&global_lock);
 }
 
+/* [用途] 清理断点 dirty 位，表示该偏移已与元数据同步。 */
 void wxshadow_clear_bp_dirty(struct wxshadow_page *page, unsigned long offset)
 {
     if (!page)
@@ -441,6 +448,7 @@ void wxshadow_clear_bp_dirty(struct wxshadow_page *page, unsigned long offset)
     spin_unlock(&global_lock);
 }
 
+/* [用途] 同步页级追踪信息（dirty 窗口、活跃修改统计）。 */
 void wxshadow_sync_page_tracking(struct wxshadow_page *page)
 {
     if (!page)
@@ -465,6 +473,7 @@ bool wxshadow_page_has_patch_dirty(struct wxshadow_page *page)
     return has_dirty;
 }
 
+/* [用途] 清空页级追踪位图与计数，回到“干净”状态。 */
 void wxshadow_clear_page_tracking(struct wxshadow_page *page)
 {
     void *patch_data[WXSHADOW_MAX_PATCHES_PER_PAGE];
@@ -494,6 +503,7 @@ void wxshadow_clear_page_tracking(struct wxshadow_page *page)
         kfunc_kfree(patch_data[i]);
 }
 
+/* [用途] 按 dirty 区间把 patch/bp 结果重新刷到 shadow 页。 */
 int wxshadow_restore_shadow_ranges(struct wxshadow_page *page)
 {
     unsigned long bp_dirty[WXSHADOW_DIRTY_BITMAP_WORDS];
@@ -562,6 +572,7 @@ int wxshadow_restore_shadow_ranges(struct wxshadow_page *page)
     return 0;
 }
 
+/* [用途] 校验当前 mm/vma 映射是否仍匹配 page 元数据，防止错写。 */
 int wxshadow_validate_page_mapping(void *mm, void *vma,
                                    struct wxshadow_page *page_info,
                                    unsigned long page_addr)
@@ -608,6 +619,7 @@ int wxshadow_validate_page_mapping(void *mm, void *vma,
     return 0;
 }
 
+/* [用途] 等待 logical_release_pending 清空，避免并发修改冲突。 */
 static int wxshadow_wait_for_logical_release(struct wxshadow_page *page,
                                              const char *reason)
 {
@@ -633,6 +645,7 @@ static int wxshadow_wait_for_logical_release(struct wxshadow_page *page,
     return -16;
 }
 
+/* [用途] 等待 BRK in-flight 处理完成，规避 release/exception 竞态。 */
 static int wxshadow_wait_for_brk_handlers(struct wxshadow_page *page,
                                           const char *reason)
 {
@@ -656,6 +669,7 @@ static int wxshadow_wait_for_brk_handlers(struct wxshadow_page *page,
     return -16;
 }
 
+/* [用途] 确保 shadow 页零偏移执行内容的 I/D cache 同步。 */
 void wxshadow_sync_shadow_exec_zero(struct wxshadow_page *page,
                                     const char *reason)
 {
@@ -682,6 +696,7 @@ static void wxshadow_clear_logical_release_pending(struct wxshadow_page *page)
     spin_unlock(&global_lock);
 }
 
+/* [用途] 物理释放路径：把页面恢复为干净 shadow 或 original 并更新状态。 */
 static int wxshadow_release_page_to_clean_shadow(struct wxshadow_page *page,
                                                  const char *reason)
 {
@@ -811,6 +826,7 @@ out_fail_unlocked:
     return ret;
 }
 
+/* [用途] 逻辑释放入口：先切到可恢复状态，规避在途 BRK/step 竞态。 */
 int wxshadow_release_page_logically(struct wxshadow_page *page,
                                     const char *reason)
 {
@@ -918,6 +934,7 @@ out_fail:
     return ret;
 }
 
+/* [用途] teardown 前等待页状态稳定，必要时重试并超时失败。 */
 static int wxshadow_wait_for_teardown(struct wxshadow_page *page,
                                       const char *reason)
 {
@@ -946,6 +963,7 @@ static int wxshadow_wait_for_teardown(struct wxshadow_page *page,
  * the userspace mapping is already gone or no longer points at our private
  * shadow PFNs.
  */
+/* [用途] 判定失败 teardown 是否还能安全 finalize。 */
 static bool wxshadow_can_finalize_failed_teardown(struct wxshadow_page *page)
 {
     void *mm;
@@ -1005,6 +1023,7 @@ static bool wxshadow_can_finalize_failed_teardown(struct wxshadow_page *page)
  * Safe to call even if the page has already been removed from page_list
  * (list_del_init is idempotent on an initialized-but-empty node).
  */
+/* [用途] 单页 teardown 主入口：恢复 original 映射并释放 shadow 资源。 */
 int wxshadow_teardown_page(struct wxshadow_page *page, const char *reason)
 {
     void *stepping = NULL;
@@ -1144,6 +1163,7 @@ int wxshadow_teardown_page(struct wxshadow_page *page, const char *reason)
  * If mm is NULL, teardown all pages (used during module unload).
  * Returns the number of pages cleaned up.
  */
+/* [用途] 批量处理指定 mm 的 page 对象 teardown。 */
 static int wxshadow_teardown_pages_for_mm_impl(void *mm, const char *reason,
                                                bool strict)
 {
@@ -1191,11 +1211,13 @@ static int wxshadow_teardown_pages_for_mm_impl(void *mm, const char *reason,
     return strict ? first_err : count;
 }
 
+/* [用途] 对外接口：teardown 指定 mm 的所有 wxshadow 页。 */
 int wxshadow_teardown_pages_for_mm(void *mm, const char *reason)
 {
     return wxshadow_teardown_pages_for_mm_impl(mm, reason, false);
 }
 
+/* [用途] 对外接口：逻辑释放指定 mm 的所有 wxshadow 页。 */
 int wxshadow_release_pages_for_mm(void *mm, const char *reason)
 {
     struct wxshadow_page *batch[32];
@@ -1261,6 +1283,7 @@ int wxshadow_release_pages_for_mm(void *mm, const char *reason)
     return first_err;
 }
 
+/* [用途] 写 fault 处理：检测写入命中并触发自动释放/回收。 */
 int wxshadow_handle_write_fault(void *mm, unsigned long addr)
 {
     struct wxshadow_page *page;
@@ -1327,6 +1350,7 @@ static int wxshadow_step_hook_fn(struct pt_regs *regs, unsigned int esr)
  * NOTE: caller must NOT call synchronize_rcu() — KP holds rcu_read_lock
  * while invoking module exit, which would deadlock.
  */
+/* [用途] 注销 BRK/step hooks，供退出和失败回滚共用。 */
 static void wx_unregister_brk_step_hooks(void)
 {
     if (kptr_debug_hook_lock) {
@@ -1344,6 +1368,7 @@ static void wx_unregister_brk_step_hooks(void)
 
 /* ========== Module init/exit ========== */
 
+/* [用途] 模块初始化：解析符号/偏移并安装 hooks。 */
 static long wxshadow_init(const char *args, const char *event, void *__user reserved)
 {
     int ret;
@@ -1567,6 +1592,7 @@ static long wxshadow_init(const char *args, const char *event, void *__user rese
  *     returned from the module function).
  *  3. Up to ~1 s timeout with a warning if something is stuck.
  */
+/* [用途] 退出阶段等待在途 handler 耗尽，避免悬挂回调。 */
 static void wait_for_handlers_drain(const char *phase)
 {
     int i, iters = 0;
@@ -1590,6 +1616,7 @@ static void wait_for_handlers_drain(const char *phase)
                 phase, iters);
 }
 
+/* [用途] 模块退出：反注册 hooks、释放页对象并清理全局资源。 */
 static long wxshadow_exit(void *__user reserved)
 {
     int page_count = 0;
@@ -1699,6 +1726,7 @@ static long wxshadow_exit(void *__user reserved)
     return 0;
 }
 
+/* [用途] 控制接口：状态输出/参数回显。 */
 static long wxshadow_control(const char *args, char *__user out_msg, int outlen)
 {
     pr_info("wxshadow: control called with args: %s\n", args ? args : "(null)");

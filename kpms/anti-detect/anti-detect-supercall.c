@@ -52,6 +52,11 @@ static void supercall_guard_before(hook_fargs8_t *args, void *udata)
         args->ret = -ENOENT;
 }
 
+/*
+ * [用途] 初始化 supercall 防护：未携带正确 superkey 的调用统一伪装为 -ENOENT。
+ * [输入] superkey: 从模块加载参数传入。
+ * [输出] 0 成功，-1 失败。
+ */
 int supercall_guard_init(const char *superkey)
 {
     if (!superkey || !superkey[0]) {
@@ -72,6 +77,7 @@ int supercall_guard_init(const char *superkey)
     return 0;
 }
 
+/* [用途] 退出防护模块，移除 supercall hook。 */
 void supercall_guard_exit(void)
 {
     if (hook_installed) {

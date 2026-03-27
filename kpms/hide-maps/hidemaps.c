@@ -28,11 +28,19 @@ void (*vfree)(void * ponit);
 void *show_map_vma;
 int flag = false;
 
+/*
+ * [用途] show_map_vma 前置回调：记录本次 VMA 输出前的 seq_file 偏移。
+ * [实现] 保存到 local.data0，供 after 回调截断输出使用。
+ */
 void show_map_vma_before(hook_fargs2_t* args, void * udata){
     seq_file* m = (seq_file*) args->arg0;
     args->local.data0 = m->count;
 }
 
+/*
+ * [用途] show_map_vma 后置回调：检测并隐藏命中关键字的 maps 行。
+ * [实现] 如果新追加行包含 "wwb_"，把 m->count 回滚到 start，等价于“抹掉本行输出”。
+ */
 void show_map_vma_after(hook_fargs2_t* args, void * udata){
     // pr_info("KP: enter vma after \n");
 
@@ -56,13 +64,9 @@ void show_map_vma_after(hook_fargs2_t* args, void * udata){
     vfree(line);
 }
 
-/**
- * @brief hello world initialization
- * @details 
- * 
- * @param args 
- * @param reserved 
- * @return int 
+/*
+ * [用途] 模块初始化：解析符号并安装 show_map_vma hook。
+ * [实现] 运行期通过 kallsyms_lookup_name 获取 vmalloc/vfree/show_map_vma。
  */
 static long hello_init(const char *args, const char *event, void *__user reserved)
 {
@@ -84,14 +88,14 @@ static long hello_init(const char *args, const char *event, void *__user reserve
 }
 
 
-
+/* [用途] control 接口：回显参数。 */
 static long hello_control0(const char *args, char *__user out_msg, int outlen)
 {
     return kpm_demo_echo_control("kpm hello", args, out_msg, outlen);
 }
 
 
-
+/* [用途] 模块退出：卸载 show_map_vma hook。 */
 static long hello_exit(void *__user reserved)
 {
     (void)reserved;

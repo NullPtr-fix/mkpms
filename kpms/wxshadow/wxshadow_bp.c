@@ -15,6 +15,7 @@
  * Check if we have a working TLB flush method.
  * Returns 0 if OK, -1 if no TLB flush capability.
  */
+/* [用途] 检查当前环境是否具备单页 TLB 刷新能力。 */
 static int check_tlb_flush_capability(void)
 {
     /* Method 1: kernel flush_tlb_page */
@@ -33,6 +34,7 @@ static int check_tlb_flush_capability(void)
     return -1;
 }
 
+/* [用途] 对写操作前置门禁：无 TLB 刷新能力时拒绝相关修改操作。 */
 static int require_tlb_flush_capability(const char *op)
 {
     if (check_tlb_flush_capability() < 0) {
@@ -50,6 +52,7 @@ static int require_tlb_flush_capability(const char *op)
     return 0;
 }
 
+/* [用途] 计算并对齐目标地址，输出 page_addr/page_off 等写入目标信息。 */
 static int prepare_shadow_target(void *mm, unsigned long addr,
                                  unsigned long page_addr, const char *op,
                                  void **out_vma)
@@ -74,6 +77,7 @@ static int prepare_shadow_target(void *mm, unsigned long addr,
     return 0;
 }
 
+/* [用途] 在 page_list 中查找可复用的 shadow 页对象。 */
 static struct wxshadow_page *find_usable_shadow_page(void *mm,
                                                      unsigned long page_addr)
 {
@@ -95,6 +99,7 @@ static struct wxshadow_page *find_usable_shadow_page(void *mm,
     return NULL;
 }
 
+/* [用途] 创建并初始化新的 shadow 页对象（含 ref/list/初始状态）。 */
 static int create_shadow_page_common(void *mm, unsigned long page_addr,
                                      const char *op,
                                      struct wxshadow_page **out_page_info,
@@ -150,6 +155,7 @@ err_nomem:
     return -12;
 }
 
+/* [用途] 复用已有页对象前的状态校验与上下文准备。 */
 static int prepare_existing_shadow_page(struct wxshadow_page *page_info,
                                         unsigned long page_addr,
                                         const char *op,
@@ -195,6 +201,7 @@ static int prepare_existing_shadow_page(struct wxshadow_page *page_info,
     return -16;  /* EBUSY */
 }
 
+/* [用途] 将 DORMANT 页刷新为可写工作态，准备后续 patch/bp 写入。 */
 static int refresh_dormant_shadow_page(struct wxshadow_page *page_info,
                                        void *mm, unsigned long page_addr,
                                        const char *op)
@@ -255,6 +262,7 @@ static int refresh_dormant_shadow_page(struct wxshadow_page *page_info,
     return 0;
 }
 
+/* [用途] 统一获取“可写 shadow 页”上下文（复用或新建）。 */
 static int acquire_shadow_page_for_write(void *mm, unsigned long addr,
                                          unsigned long page_addr,
                                          const char *op,
@@ -318,6 +326,7 @@ static int acquire_shadow_page_for_write(void *mm, unsigned long addr,
     return 0;
 }
 
+/* [用途] 销毁尚未激活的新建页对象，避免失败路径泄漏。 */
 static void destroy_unactivated_shadow_page(struct wxshadow_page *page_info)
 {
     if (!page_info)
@@ -327,6 +336,7 @@ static void destroy_unactivated_shadow_page(struct wxshadow_page *page_info)
     wxshadow_page_put(page_info);
 }
 
+/* [用途] 将准备好的 shadow 页真正切换为执行映射。 */
 static int activate_shadow_page(void *vma, unsigned long page_addr,
                                 struct wxshadow_page *page_info)
 {
@@ -343,6 +353,7 @@ struct wxshadow_write_ctx {
     bool needs_activation;
 };
 
+/* [用途] 写入事务入口：拿到 ctx（目标页、偏移、vma 等）。 */
 static int wxshadow_acquire_write_ctx(void *mm, unsigned long addr,
                                       const char *op,
                                       struct wxshadow_write_ctx *ctx)
@@ -366,6 +377,7 @@ static int wxshadow_acquire_write_ctx(void *mm, unsigned long addr,
                                          &ctx->needs_activation);
 }
 
+/* [用途] 释放写入上下文引用（与 acquire 成对）。 */
 static void wxshadow_put_write_ctx(struct wxshadow_write_ctx *ctx)
 {
     if (!ctx || !ctx->page_info)
@@ -375,6 +387,7 @@ static void wxshadow_put_write_ctx(struct wxshadow_write_ctx *ctx)
     ctx->page_info = NULL;
 }
 
+/* [用途] 写入事务失败回滚：恢复状态并释放临时资源。 */
 static void wxshadow_abort_write_ctx(struct wxshadow_write_ctx *ctx)
 {
     if (!ctx || !ctx->page_info)
@@ -387,6 +400,7 @@ static void wxshadow_abort_write_ctx(struct wxshadow_write_ctx *ctx)
     ctx->page_info = NULL;
 }
 
+/* [用途] 写入事务提交：激活 shadow 映射并更新页状态。 */
 static int wxshadow_activate_write_ctx(struct wxshadow_write_ctx *ctx,
                                        bool force_activation)
 {
@@ -399,6 +413,7 @@ static int wxshadow_activate_write_ctx(struct wxshadow_write_ctx *ctx,
     return activate_shadow_page(ctx->vma, ctx->page_addr, ctx->page_info);
 }
 
+/* [用途] 为 bp/patch 记录生成单调递增序列号。 */
 static u64 next_mod_serial_locked(struct wxshadow_page *page_info)
 {
     page_info->next_mod_serial++;
@@ -407,6 +422,7 @@ static u64 next_mod_serial_locked(struct wxshadow_page *page_info)
     return page_info->next_mod_serial;
 }
 
+/* [用途] 确保指定地址有可用 bp 槽位（存在则复用，不存在则分配）。 */
 static int ensure_bp_slot(struct wxshadow_page *page_info, unsigned long addr)
 {
     int i;
@@ -449,6 +465,7 @@ enum wxshadow_shadow_flush_mode {
     WXSHADOW_SHADOW_FLUSH_PAGE,
 };
 
+/* [用途] 首次写入前把 original 页内容复制到 shadow 页。 */
 static int copy_original_page_to_shadow(struct wxshadow_page *page_info,
                                         const void *orig_kaddr)
 {
@@ -459,6 +476,7 @@ static int copy_original_page_to_shadow(struct wxshadow_page *page_info,
     return 0;
 }
 
+/* [用途] 新页写入前准备：复制原页、初始化元数据。 */
 static int wxshadow_prepare_new_write_ctx(struct wxshadow_write_ctx *ctx)
 {
     if (!ctx || !ctx->page_info || !ctx->is_new)
@@ -467,6 +485,7 @@ static int wxshadow_prepare_new_write_ctx(struct wxshadow_write_ctx *ctx)
     return copy_original_page_to_shadow(ctx->page_info, ctx->orig_kaddr);
 }
 
+/* [用途] 向 shadow 页写入任意长度字节流。 */
 static int write_shadow_bytes(struct wxshadow_page *page_info,
                               unsigned long page_addr, unsigned long offset,
                               const void *src, unsigned long len,
@@ -494,6 +513,7 @@ static int write_shadow_bytes(struct wxshadow_page *page_info,
     return 0;
 }
 
+/* [用途] 向 shadow 页写入单条 32-bit 指令/数据。 */
 static int write_shadow_u32(struct wxshadow_page *page_info,
                             unsigned long page_addr, unsigned long offset,
                             u32 value,
@@ -504,6 +524,7 @@ static int write_shadow_u32(struct wxshadow_page *page_info,
                               sizeof(value), flush_mode, flush_icache);
 }
 
+/* [用途] 插入或更新 patch 记录（地址、长度、序列号、激活态）。 */
 static int upsert_patch_record(struct wxshadow_page *page_info,
                                unsigned long offset, unsigned long len,
                                void *patch_data, void **out_old_data,
@@ -567,6 +588,7 @@ struct shadow_apply_op {
     bool is_bp;
 };
 
+/* [用途] 按地址范围重建 shadow 页内容（合并 patch/bp 结果）。 */
 static int wxshadow_rebuild_shadow_range(struct wxshadow_page *page_info,
                                          unsigned long offset,
                                          unsigned long len)
@@ -704,6 +726,7 @@ static int wxshadow_rebuild_shadow_range(struct wxshadow_page *page_info,
     return 0;
 }
 
+/* [用途] 判断页上是否仍有活跃修改项（bp 或 patch）。 */
 static bool wxshadow_page_has_active_mods_locked(struct wxshadow_page *page_info)
 {
     int i;
@@ -719,6 +742,7 @@ static bool wxshadow_page_has_active_mods_locked(struct wxshadow_page *page_info
     return false;
 }
 
+/* [用途] 锁内清理 logical_release_pending 状态。 */
 static void wxshadow_clear_logical_release_pending_locked(
     struct wxshadow_page *page_info)
 {
@@ -726,6 +750,7 @@ static void wxshadow_clear_logical_release_pending_locked(
         page_info->logical_release_pending = false;
 }
 
+/* [用途] 锁外包装：清理 logical_release_pending。 */
 static void wxshadow_clear_logical_release_pending(struct wxshadow_page *page_info)
 {
     spin_lock(&global_lock);
@@ -736,6 +761,7 @@ static void wxshadow_clear_logical_release_pending(struct wxshadow_page *page_in
 #define WXSHADOW_RELEASE_MATCH_BP    (1U << 0)
 #define WXSHADOW_RELEASE_MATCH_PATCH (1U << 1)
 
+/* [用途] 等待 BRK in-flight 处理结束，避免 release 与异常处理竞态。 */
 static int wxshadow_wait_for_release_brk_handlers(struct wxshadow_page *page_info,
                                                   const char *reason)
 {
@@ -762,6 +788,7 @@ static int wxshadow_wait_for_release_brk_handlers(struct wxshadow_page *page_inf
     return -16;
 }
 
+/* [用途] 释放指定地址处的 bp 或 patch 记录，并按需重建 shadow 页。 */
 static int wxshadow_release_mod_at_addr(struct wxshadow_page *page_info,
                                         unsigned long addr,
                                         unsigned int match_flags,
@@ -901,6 +928,7 @@ retry:
 
 /* ========== Set breakpoint ========== */
 
+/* [用途] 对外接口：设置断点（必要时创建/激活 shadow 页）。 */
 int wxshadow_do_set_bp(void *mm, unsigned long addr)
 {
     struct wxshadow_write_ctx ctx;
@@ -967,6 +995,7 @@ out_abort:
 
 /* ========== Set register modification ========== */
 
+/* [用途] 对外接口：为已存在断点追加/更新寄存器改写规则。 */
 int wxshadow_do_set_reg(void *mm, unsigned long addr,
                         unsigned int reg_idx, unsigned long value)
 {
@@ -1024,6 +1053,7 @@ int wxshadow_do_set_reg(void *mm, unsigned long addr,
  * kernel linear map.  Returns a kmalloc'd buffer on success, NULL on failure.
  * Caller must kfunc_kfree() the returned buffer.
  */
+/* [用途] 通过 pte 映射路径从用户态缓冲安全复制 patch 数据。 */
 static void *copy_from_user_via_pte(void __user *ubuf, unsigned long len)
 {
     void *caller_mm;
@@ -1077,6 +1107,7 @@ static void *copy_from_user_via_pte(void __user *ubuf, unsigned long len)
 
 /* ========== Patch: Write data to shadow page via kernel VA ========== */
 
+/* [用途] 对外接口：应用 patch 到 shadow 页。 */
 int wxshadow_do_patch(void *mm, unsigned long addr, void __user *buf, unsigned long len)
 {
     struct wxshadow_write_ctx ctx;
@@ -1172,6 +1203,7 @@ out_free:
 
 /* ========== Release: Release shadow page ========== */
 
+/* [用途] 对外接口：释放指定地址或整页的修改并回收状态。 */
 int wxshadow_do_release(void *mm, unsigned long addr)
 {
     struct wxshadow_page *page_info;
@@ -1196,6 +1228,7 @@ int wxshadow_do_release(void *mm, unsigned long addr)
 
 /* ========== Delete breakpoint ========== */
 
+/* [用途] 对外接口：删除断点并重建 shadow 页内容。 */
 int wxshadow_do_del_bp(void *mm, unsigned long addr)
 {
     struct wxshadow_page *page_info;
@@ -1218,6 +1251,7 @@ int wxshadow_do_del_bp(void *mm, unsigned long addr)
 /* ========== prctl hook ========== */
 
 /* Resolve pid to mm_struct. Returns mm with refcount held (caller must mmput). */
+/* [用途] 解析 pid 参数到 mm 指针（支持 pid=0/self）。 */
 static void *resolve_pid_to_mm(pid_t pid)
 {
     void *mm;
@@ -1238,6 +1272,7 @@ static void *resolve_pid_to_mm(pid_t pid)
     return mm;
 }
 
+/* [用途] prctl 钩子入口：解析命令并分发到 set_bp/set_reg/patch/release/del_bp。 */
 void prctl_before(hook_fargs4_t *args, void *udata)
 {
     int option = (int)syscall_argn(args, 0);

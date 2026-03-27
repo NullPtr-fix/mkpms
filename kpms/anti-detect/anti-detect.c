@@ -58,6 +58,7 @@ static const char *hidden_names[] = {
     NULL,
 };
 
+/* [用途] 判断路径/文件名是否命中隐藏规则。 */
 static int should_hide(const char *name)
 {
     for (const char **p = hidden_names; *p; p++) {
@@ -68,6 +69,10 @@ static int should_hide(const char *name)
 }
 
 /* Block stat/access/readlink for hidden files */
+/*
+ * [用途] stat/access/readlink 前置拦截。
+ * [策略] 仅影响普通 app（uid >= 10000），命中即返回 -ENOENT 并跳过原 syscall。
+ */
 static void before_stat_syscall(hook_fargs4_t *args, void *udata)
 {
     uid_t uid = current_uid();
@@ -85,6 +90,10 @@ static void before_stat_syscall(hook_fargs4_t *args, void *udata)
 }
 
 /* Pre-scan user dirent buffer for hidden entries without allocating */
+/*
+ * [用途] 在不分配内存的前提下快速判断 getdents64 结果是否包含需隐藏条目。
+ * [输出] 1=存在命中项，0=不存在或读取异常。
+ */
 static int getdents_has_hidden(char __user *ubuf, long len)
 {
     unsigned short reclen;
@@ -105,6 +114,10 @@ static int getdents_has_hidden(char __user *ubuf, long len)
 }
 
 /* Filter directory listings to remove hidden entries */
+/*
+ * [用途] getdents64 后处理：删除命中条目并回写紧凑后的目录项缓冲。
+ * [实现] 用户缓冲 -> 内核缓冲过滤 -> 再 copy_to_user。
+ */
 static void after_getdents64(hook_fargs4_t *args, void *udata)
 {
     uid_t uid = current_uid();
@@ -158,6 +171,10 @@ static void after_getdents64(hook_fargs4_t *args, void *udata)
     kfn_kfree(kbuf);
 }
 
+/*
+ * [用途] 解析跨内核版本差异较大的基础符号（kmalloc/kfree/copy_from_user）。
+ * [实现] 对关键符号名做多候选回退，降低适配失败概率。
+ */
 static int resolve_symbols(void)
 {
     /* kmalloc - try multiple names */
@@ -214,6 +231,10 @@ static const struct syscall_hook hooks[] = {
 
 static int hooks_installed;
 
+/*
+ * [用途] anti-detect 主初始化。
+ * [实现] 依次安装 syscall hooks，任一失败则回滚；最后按需启用 supercall guard。
+ */
 static long anti_detect_init(const char *args, const char *event, void *__user reserved)
 {
     pr_info("anti-detect: loading...\n");
@@ -248,6 +269,7 @@ rollback:
     return -1;
 }
 
+/* [用途] 模块退出：先移除 supercall guard，再逆序卸载 syscall hooks。 */
 static long anti_detect_exit(void *__user reserved)
 {
     supercall_guard_exit();

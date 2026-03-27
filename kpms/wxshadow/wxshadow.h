@@ -10,12 +10,12 @@
 #include <ktypes.h>
 #include <stdbool.h>
 
-/* Page size constants */
+/* [用途] 页大小常量（当前实现固定按 4KB 页工作）。 */
 #define PAGE_SHIFT      12
 #define PAGE_SIZE       (1UL << PAGE_SHIFT)
 #define PAGE_MASK       (~(PAGE_SIZE - 1))
 
-/* prctl options for wxshadow */
+/* [用途] 用户态通过 prctl 与 wxshadow 交互的命令号。 */
 #define PR_WXSHADOW_SET_BP      0x57580001  /* WX + 1 */
 #define PR_WXSHADOW_SET_REG     0x57580002  /* WX + 2 */
 #define PR_WXSHADOW_DEL_BP      0x57580003  /* WX + 3 */
@@ -24,7 +24,7 @@
 #define PR_WXSHADOW_PATCH       0x57580006  /* WX + 6: Patch shadow page via kernel VA */
 #define PR_WXSHADOW_RELEASE     0x57580008  /* WX + 8: Release shadow */
 
-/* TLB flush modes */
+/* [用途] TLB 刷新策略：精确/广播/全量/自动。 */
 enum wxshadow_tlb_mode {
     WX_TLB_MODE_AUTO = 0,       /* Auto: use ASID if available, else broadcast */
     WX_TLB_MODE_PRECISE,        /* Precise: use ASID (vale1is) */
@@ -42,7 +42,7 @@ enum wxshadow_tlb_mode {
 /* Instruction size */
 #define AARCH64_INSN_SIZE       4
 
-/* Page states */
+/* [用途] 每个 shadow 页在生命周期中的状态机。 */
 enum wxshadow_state {
     WX_STATE_NONE = 0,      /* No shadow allocated */
     WX_STATE_ORIGINAL,      /* VA mapped to original page (r--) */
@@ -63,14 +63,14 @@ enum wxshadow_state {
 #define WXSHADOW_DIRTY_BITMAP_WORDS \
     ((PAGE_SIZE + WXSHADOW_DIRTY_WORD_BITS - 1) / WXSHADOW_DIRTY_WORD_BITS)
 
-/* Register modification entry */
+/* [用途] 单条寄存器改写规则（断点命中后应用）。 */
 struct wxshadow_reg_mod {
     u8 reg_idx;             /* Register index (0-30 for x0-x30, 31=sp) */
     bool enabled;           /* Whether this modification is active */
     u64 value;              /* Value to set */
 };
 
-/* Per-breakpoint info */
+/* [用途] 单个断点记录（地址 + 寄存器改写集合）。 */
 struct wxshadow_bp {
     unsigned long addr;     /* Breakpoint address */
     bool active;            /* Whether this bp is active */
@@ -79,6 +79,7 @@ struct wxshadow_bp {
     int nr_reg_mods;        /* Number of active register modifications */
 };
 
+/* [用途] 单个 patch 记录（页内偏移 + 数据 + 序列号）。 */
 struct wxshadow_patch {
     u16 offset;             /* Patch start offset within page */
     u16 len;                /* Patch length in bytes */
@@ -87,7 +88,7 @@ struct wxshadow_patch {
     void *data;             /* Patched bytes, len bytes */
 };
 
-/* Per-page shadow info (dynamically allocated per breakpoint page) */
+/* [用途] 核心页对象：维护原页/影子页映射状态及该页全部修改元数据。 */
 /* Note: struct list_head is defined in linux/list.h (KP framework) */
 struct wxshadow_page {
     struct list_head list;          /* Linked to global page_list */
@@ -143,11 +144,11 @@ struct wxshadow_page {
     unsigned long patch_dirty[WXSHADOW_DIRTY_BITMAP_WORDS];
 };
 
-/* BRK handler return values */
+/* [用途] BRK/STEP handler 与 debug 框架的返回约定。 */
 #define DBG_HOOK_HANDLED    0
 #define DBG_HOOK_ERROR      1
 
-/* Hook method selection */
+/* [用途] BRK/STEP 接入方式选择（直接 hook 或 register API）。 */
 enum wx_hook_method {
     WX_HOOK_METHOD_NONE = 0,
     WX_HOOK_METHOD_DIRECT,      /* Direct hook (preferred) */
@@ -174,7 +175,7 @@ struct wx_step_hook {
     int (*fn)(struct pt_regs *regs, unsigned int esr);
 };
 
-/* PTE bits - use pgtable.h definitions if available */
+/* [用途] 关键 PTE 位定义（缺失时本地兜底）。 */
 #ifndef PTE_VALID
 #define PTE_VALID           (1UL << 0)
 #endif

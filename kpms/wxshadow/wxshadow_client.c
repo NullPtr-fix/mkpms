@@ -16,7 +16,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
+#include <sys/types.h>
 #include <sys/prctl.h>
 #include <errno.h>
 #include <getopt.h>
@@ -36,6 +38,7 @@ struct reg_mod {
     unsigned long value;
 };
 
+/* [用途] 打印命令行帮助。 */
 static void print_usage(const char *prog) {
     printf("wxshadow_client - W^X Shadow Memory Client\n\n");
     printf("Usage:\n");
@@ -71,11 +74,13 @@ static void print_usage(const char *prog) {
     printf("  %s -p 1234 --release                   # release all shadows\n", prog);
 }
 
+/* [用途] 将 pid=0 规范化为当前进程 pid，便于 CLI 统一表示“self”。 */
 static pid_t target_pid(pid_t pid)
 {
     return pid ? pid : getpid();
 }
 
+/* [用途] 打开目标进程 maps 文件（pid=0 时读取 /proc/self/maps）。 */
 static FILE *open_maps_file(pid_t pid)
 {
     char path[256];
@@ -88,6 +93,10 @@ static FILE *open_maps_file(pid_t pid)
     return fopen(path, "r");
 }
 
+/*
+ * [用途] 统一调用 wxshadow 的 prctl 接口并处理错误打印。
+ * [输出] 0 成功，-1 失败。
+ */
 static int run_wxshadow_prctl(const char *name, int option, pid_t pid,
                               unsigned long addr, unsigned long arg4,
                               unsigned long arg5)
@@ -104,6 +113,7 @@ static int run_wxshadow_prctl(const char *name, int option, pid_t pid,
 }
 
 /* Parse register name to index */
+/* [用途] 把寄存器名（x0~x30/sp）解析为内核接口需要的寄存器编号。 */
 static int parse_reg_name(const char *name) {
     if (strcasecmp(name, "sp") == 0)
         return 31;
@@ -118,6 +128,7 @@ static int parse_reg_name(const char *name) {
 }
 
 /* Parse register modification string like "x0=123" */
+/* [用途] 解析 `xN=value`/`sp=value` 字符串到 reg_mod 结构。 */
 static int parse_reg_mod(const char *str, struct reg_mod *mod) {
     char reg_name[16];
     char *eq = strchr(str, '=');
@@ -141,6 +152,7 @@ static int parse_reg_mod(const char *str, struct reg_mod *mod) {
 }
 
 /* Find library base address in /proc/pid/maps */
+/* [用途] 在 maps 中按库名查找可执行段基址，用于 base+offset 定位目标地址。 */
 static unsigned long find_lib_base(pid_t pid, const char *lib_name) {
     char line[512];
     FILE *fp;
@@ -169,6 +181,7 @@ static unsigned long find_lib_base(pid_t pid, const char *lib_name) {
 }
 
 /* Show executable memory regions */
+/* [用途] 打印目标进程可执行内存段，辅助用户定位断点地址。 */
 static void show_maps(pid_t pid) {
     char line[512];
     FILE *fp;
@@ -213,6 +226,7 @@ static void show_maps(pid_t pid) {
 }
 
 /* Set breakpoint via prctl */
+/* [用途] 下发 SET_BP 命令设置断点。 */
 static int set_breakpoint(pid_t pid, unsigned long addr) {
     if (run_wxshadow_prctl("SET_BP", PR_WXSHADOW_SET_BP, pid, addr, 0, 0) < 0)
         return -1;
@@ -222,6 +236,7 @@ static int set_breakpoint(pid_t pid, unsigned long addr) {
 }
 
 /* Set register modification via prctl */
+/* [用途] 下发 SET_REG 命令，配置断点触发时寄存器改写。 */
 static int set_reg_mod(pid_t pid, unsigned long addr, int reg_idx, unsigned long value) {
     if (run_wxshadow_prctl("SET_REG", PR_WXSHADOW_SET_REG, pid, addr,
                            reg_idx, value) < 0) {
@@ -237,6 +252,7 @@ static int set_reg_mod(pid_t pid, unsigned long addr, int reg_idx, unsigned long
 }
 
 /* Delete breakpoint via prctl (addr=0 means delete all) */
+/* [用途] 下发 DEL_BP 命令，支持按地址或全量删除断点。 */
 static int del_breakpoint(pid_t pid, unsigned long addr) {
     if (run_wxshadow_prctl("DEL_BP", PR_WXSHADOW_DEL_BP, pid, addr, 0, 0) < 0)
         return -1;
@@ -249,6 +265,7 @@ static int del_breakpoint(pid_t pid, unsigned long addr) {
 }
 
 /* Parse hex string to binary data. Returns number of bytes, or -1 on error */
+/* [用途] 将十六进制字符串转为字节数组，供 PATCH 接口写入影子页。 */
 static int parse_hex_string(const char *hex, unsigned char *out, int max_len) {
     int len = strlen(hex);
     int i, out_len;
@@ -277,6 +294,7 @@ static int parse_hex_string(const char *hex, unsigned char *out, int max_len) {
 }
 
 /* Patch shadow page via prctl */
+/* [用途] 下发 PATCH 命令向影子页写入机器码。 */
 static int patch_shadow(pid_t pid, unsigned long addr,
                         unsigned char *data, int data_len) {
     if (run_wxshadow_prctl("PATCH", PR_WXSHADOW_PATCH, pid, addr,
@@ -290,6 +308,7 @@ static int patch_shadow(pid_t pid, unsigned long addr,
 }
 
 /* Release shadow modification via prctl (addr=0 means release all) */
+/* [用途] 下发 RELEASE 命令，释放指定地址或全部影子修改。 */
 static int release_shadow(pid_t pid, unsigned long addr) {
     int ret = prctl(PR_WXSHADOW_RELEASE, pid, addr, 0, 0);
     if (ret < 0) {
@@ -309,6 +328,10 @@ static int release_shadow(pid_t pid, unsigned long addr) {
     return 0;
 }
 
+/*
+ * [用途] 程序入口：解析参数后按模式分发（maps / release / delete / patch / set-bp）。
+ * [实现] 统一支持 `-a` 直接地址和 `-b + -o` 库基址偏移两种寻址方式。
+ */
 int main(int argc, char *argv[]) {
     static struct option long_options[] = {
         {"pid",     required_argument, 0, 'p'},
