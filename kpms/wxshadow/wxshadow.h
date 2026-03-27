@@ -161,7 +161,7 @@ enum wxshadow_state {
  *   WXSHADOW_MAX_REG_MODS         - 每个断点最多可修改的寄存器数量（x0~x30 + sp）
  *   WXSHADOW_MAX_BPS_PER_PAGE     - 每个影子页最多可设置的断点数量
  *   WXSHADOW_MAX_PATCHES_PER_PAGE - 每个影子页最多可记录的补丁数量
- *   WXSHADOW_MAX_ACTIVE_MODS_PER_PAGE - 断点 + 补丁的总上限（用于串行号溢出检查）
+ *   WXSHADOW_MAX_ACTIVE_MODS_PER_PAGE - 断点 + 补丁的总上限（用于序列号溢出检查）
  *   WXSHADOW_DIRTY_WORD_BITS      - 脏位图单个 word 的比特数（等于 unsigned long 位宽）
  *   WXSHADOW_DIRTY_BITMAP_WORDS   - 覆盖整个页面所需的 word 数量
  *                                   （用于 bp_dirty / patch_dirty 位图，每比特对应页内一个指令槽）
@@ -292,8 +292,9 @@ struct wxshadow_page {
      * 生命周期字段（均受 global_lock 保护）：
      *
      *   refcount               - 引用计数。页面在 page_list 中时初始为 1（链表持有一个引用）；
-     *                            find_page/find_by_addr 的调用方在释放锁之前必须递增计数，
-     *                            使用完毕后调用 wxshadow_page_put() 归还引用。
+     *                            find_page/find_by_addr（见 wxshadow_internal.h）的调用方
+     *                            在释放锁之前必须递增计数，使用完毕后调用
+     *                            wxshadow_page_put() 归还引用。
      *                            计数归零时 kfree 本结构体。
      *   dead                   - 当页面从 page_list 移除时置 true。
      *                            已在锁释放前获得引用的处理函数必须检查此标志，
