@@ -138,8 +138,6 @@ static unsigned long lookup_name_safe(const char *name)
         kfunc_##name = (typeof(kfunc_##name))lookup_name_safe(#name); \
     } while (0)
 
-    } while (0)
-
 /*
  * ========== 内核符号批量解析 ==========
  *
