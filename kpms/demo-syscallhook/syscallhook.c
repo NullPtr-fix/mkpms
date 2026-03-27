@@ -34,6 +34,10 @@ enum pid_type
 struct pid_namespace;
 pid_t (*__task_pid_nr_ns)(struct task_struct *task, enum pid_type type, struct pid_namespace *ns) = 0;
 
+/*
+ * [用途] openat 前置回调（链 0）：采集调用现场并打印。
+ * [实现] 读取 dfd/filename/flag/mode，并缓存 task 到 local.data0 供后续链使用。
+ */
 void before_openat_0(hook_fargs4_t *args, void *udata)
 {
     int dfd = (int)syscall_argn(args, 0);
@@ -59,6 +63,7 @@ void before_openat_0(hook_fargs4_t *args, void *udata)
 
 uint64_t open_counts = 0;
 
+/* [用途] openat 前置回调（链 1）：统计调用次数。 */
 void before_openat_1(hook_fargs4_t *args, void *udata)
 {
     uint64_t *pcount = (uint64_t *)udata;
@@ -66,11 +71,16 @@ void before_openat_1(hook_fargs4_t *args, void *udata)
     pr_info("hook_chain_1 before openat task: %llx, count: %llx\n", args->local.data0, *pcount);
 }
 
+/* [用途] openat 后置回调（链 1）：读取链路共享上下文并打印。 */
 void after_openat_1(hook_fargs4_t *args, void *udata)
 {
     pr_info("hook_chain_1 after openat task: %llx\n", args->local.data0);
 }
 
+/*
+ * [用途] 模块初始化：根据 args 选择 function pointer hook 或 inline hook。
+ * [实现] 支持两种路径，失败时打印错误码。
+ */
 static long syscall_hook_demo_init(const char *args, const char *event, void *__user reserved)
 {
     margs = args;
@@ -110,11 +120,13 @@ out:
     return 0;
 }
 
+/* [用途] control 接口：记录参数。 */
 static long syscall_hook_control0(const char *args, char *__user out_msg, int outlen)
 {
     return kpm_demo_log_control("kpm-syscall-hook-demo", args, out_msg, outlen);
 }
 
+/* [用途] 模块退出：按 hook 类型执行对应 unhook。 */
 static long syscall_hook_demo_exit(void *__user reserved)
 {
     pr_info("kpm-syscall-hook-demo exit ...\n");

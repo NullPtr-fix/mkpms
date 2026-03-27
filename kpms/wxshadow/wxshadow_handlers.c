@@ -20,6 +20,7 @@
  * This allows integrity checks to see original code instead of BRK.
  * Returns 0 if handled, -1 if not our fault
  */
+/* [用途] 处理“读”缺页：把目标页切回 original 映射，隐藏 shadow 修改。 */
 int wxshadow_handle_read_fault(void *mm, unsigned long addr)
 {
     struct wxshadow_page *page_info;
@@ -69,6 +70,7 @@ int wxshadow_handle_read_fault(void *mm, unsigned long addr)
  * Called when execution resumes after a read fault switched to original.
  * Returns 0 if handled, -1 if not our fault
  */
+/* [用途] 处理“执行”缺页：确保目标页映射到 shadow 可执行页。 */
 int wxshadow_handle_exec_fault(void *mm, unsigned long addr)
 {
     struct wxshadow_page *page_info;
@@ -123,6 +125,10 @@ int wxshadow_handle_exec_fault(void *mm, unsigned long addr)
  * do_page_fault hook - intercept page faults for wxshadow pages
  * Signature: int do_page_fault(unsigned long far, unsigned int esr, struct pt_regs *regs)
  */
+/*
+ * [用途] do_page_fault 前置核心逻辑。
+ * [实现] 区分读/执行 fault，驱动 original/shadow 之间的映射切换。
+ */
 static void do_page_fault_before_impl(hook_fargs3_t *args, void *udata)
 {
     unsigned long far = (unsigned long)args->arg0;
@@ -175,6 +181,7 @@ static void do_page_fault_before_impl(hook_fargs3_t *args, void *udata)
     kfunc_mmput(mm);
 }
 
+/* [用途] do_page_fault 钩子入口（包装 impl，降低 hook 框架耦合）。 */
 void do_page_fault_before(hook_fargs3_t *args, void *udata)
 {
     WX_HANDLER_ENTER();
@@ -207,6 +214,7 @@ void do_page_fault_before(hook_fargs3_t *args, void *udata)
 
 #define FOLL_WRITE 0x01
 
+/* [用途] follow_page_pte 前置：进入 GUP 隐藏阶段，临时暴露 original 映射。 */
 static void follow_page_pte_before_impl(hook_fargs5_t *args, void *udata)
 {
     void *vma = (void *)args->arg0;
@@ -256,6 +264,7 @@ static void follow_page_pte_before_impl(hook_fargs5_t *args, void *udata)
     args->arg7 = (unsigned long)ptep;
 }
 
+/* [用途] follow_page_pte 后置：结束 GUP 隐藏阶段并恢复原先 PTE。 */
 static void follow_page_pte_after_impl(hook_fargs5_t *args, void *udata)
 {
     struct wxshadow_page *page = (void *)args->arg5;
@@ -274,6 +283,7 @@ static void follow_page_pte_after_impl(hook_fargs5_t *args, void *udata)
     wxshadow_page_put(page);  /* release ref from before hook */
 }
 
+/* [用途] follow_page_pte 前置 hook 包装入口。 */
 void follow_page_pte_before(hook_fargs5_t *args, void *udata)
 {
     WX_HANDLER_ENTER();
@@ -281,6 +291,7 @@ void follow_page_pte_before(hook_fargs5_t *args, void *udata)
     WX_HANDLER_EXIT();
 }
 
+/* [用途] follow_page_pte 后置 hook 包装入口。 */
 void follow_page_pte_after(hook_fargs5_t *args, void *udata)
 {
     WX_HANDLER_ENTER();
@@ -304,6 +315,7 @@ void follow_page_pte_after(hook_fargs5_t *args, void *udata)
  *   - PTE is restored to original before freeing the shadow page memory.
  *   - Page struct is released via wxshadow_page_put() (list's ref).
  */
+/* [用途] exit_mmap 前置：触发当前 mm 关联 shadow 页的 teardown。 */
 static void exit_mmap_before_impl(hook_fargs1_t *args, void *udata)
 {
     void *mm = (void *)args->arg0;
@@ -318,6 +330,7 @@ static void exit_mmap_before_impl(hook_fargs1_t *args, void *udata)
                 nr, mm);
 }
 
+/* [用途] exit_mmap hook 包装入口。 */
 void exit_mmap_before(hook_fargs1_t *args, void *udata)
 {
     WX_HANDLER_ENTER();
@@ -348,6 +361,7 @@ struct fork_fix_entry {
  * To avoid that, pause the parent's live shadow mappings before copy_process
  * clones the mm, then reactivate them afterwards in the parent only.
  */
+/* [用途] 判定 copy_process 路径是否需要执行 wxshadow 的 fork 修复逻辑。 */
 static bool wxshadow_copy_process_needs_fork_fix(unsigned long clone_flags)
 {
     /*
@@ -357,6 +371,7 @@ static bool wxshadow_copy_process_needs_fork_fix(unsigned long clone_flags)
     return !(clone_flags & CLONE_VM);
 }
 
+/* [用途] 检查页是否仍有活跃断点/patch，决定是否可进入休眠或回收。 */
 static bool wxshadow_page_has_active_mods_locked(struct wxshadow_page *page)
 {
     int i;
@@ -377,6 +392,10 @@ static bool wxshadow_page_has_active_mods_locked(struct wxshadow_page *page)
     return false;
 }
 
+/*
+ * [用途] fork 前暂停父进程 shadow 页（切回 original），降低复制期间不一致风险。
+ * [并发] 仅处理 parent_mm 相关页，配合全局锁和页锁串行化状态迁移。
+ */
 static void wxshadow_pause_parent_shadow_pages(void *parent_mm)
 {
     struct fork_fix_entry batch[FORK_FIX_BATCH];
@@ -463,6 +482,7 @@ static void wxshadow_pause_parent_shadow_pages(void *parent_mm)
     }
 }
 
+/* [用途] fork 后恢复父进程 shadow 页执行映射。 */
 static void wxshadow_resume_parent_shadow_pages(void *parent_mm)
 {
     struct fork_fix_entry batch[FORK_FIX_BATCH];
@@ -549,6 +569,7 @@ static void wxshadow_resume_parent_shadow_pages(void *parent_mm)
     }
 }
 
+/* [用途] dup_mmap 前置 hook：暂停父 mm shadow 页。 */
 void before_dup_mmap_wx(hook_fargs2_t *args, void *udata)
 {
     void *oldmm = (void *)args->arg1;
@@ -567,6 +588,7 @@ void before_dup_mmap_wx(hook_fargs2_t *args, void *udata)
     WX_HANDLER_EXIT();
 }
 
+/* [用途] dup_mmap 后置 hook：恢复父 mm shadow 页。 */
 void after_dup_mmap_wx(hook_fargs2_t *args, void *udata)
 {
     void *oldmm = (void *)args->arg1;
@@ -583,6 +605,7 @@ void after_dup_mmap_wx(hook_fargs2_t *args, void *udata)
     WX_HANDLER_EXIT();
 }
 
+/* [用途] uprobe_dup_mmap 前置 hook（与 dup_mmap 路径一致）。 */
 void before_uprobe_dup_mmap_wx(hook_fargs2_t *args, void *udata)
 {
     void *oldmm = (void *)args->arg0;
@@ -601,6 +624,7 @@ void before_uprobe_dup_mmap_wx(hook_fargs2_t *args, void *udata)
     WX_HANDLER_EXIT();
 }
 
+/* [用途] uprobe_dup_mmap 后置 hook（与 dup_mmap 路径一致）。 */
 void after_uprobe_dup_mmap_wx(hook_fargs2_t *args, void *udata)
 {
     void *oldmm = (void *)args->arg0;
@@ -617,6 +641,7 @@ void after_uprobe_dup_mmap_wx(hook_fargs2_t *args, void *udata)
     WX_HANDLER_EXIT();
 }
 
+/* [用途] copy_process 前置 hook：记录 clone_flags 并按需暂停父页。 */
 void before_copy_process_wx(hook_fargs8_t *args, void *udata)
 {
     void *parent_mm;
@@ -640,6 +665,7 @@ void before_copy_process_wx(hook_fargs8_t *args, void *udata)
     WX_HANDLER_EXIT();
 }
 
+/* [用途] copy_process 后置 hook：恢复父页并清理 fork 过程临时状态。 */
 void after_copy_process_wx(hook_fargs8_t *args, void *udata)
 {
     void *parent_mm;
@@ -663,6 +689,7 @@ void after_copy_process_wx(hook_fargs8_t *args, void *udata)
 /* ========== BRK and Step handlers ========== */
 
 /* Print register info */
+/* [用途] 调试辅助：打印关键寄存器快照。 */
 static void wxshadow_print_regs(struct pt_regs *regs, unsigned long pc)
 {
     pr_info("wxshadow: ======== Breakpoint Hit ========\n");
@@ -679,6 +706,7 @@ static void wxshadow_print_regs(struct pt_regs *regs, unsigned long pc)
 }
 
 /* Apply register modifications */
+/* [用途] 应用断点关联的寄存器改写规则。 */
 static void wxshadow_apply_reg_mods(struct pt_regs *regs, struct wxshadow_bp *bp)
 {
     int i;
@@ -700,6 +728,7 @@ static void wxshadow_apply_reg_mods(struct pt_regs *regs, struct wxshadow_bp *bp
 }
 
 /* Get current task's mm */
+/* [用途] 获取当前任务 mm，内核线程场景下可能返回 NULL。 */
 static void *get_current_mm(void)
 {
     return kfunc_get_task_mm(current);
@@ -712,6 +741,7 @@ static void *get_current_mm(void)
  * Returns page_info with refcount incremented (caller must call
  * wxshadow_page_put when done).  Returns NULL if not found (no ref taken).
  */
+/* [用途] 按 mm+addr 查找对应 wxshadow_page 对象。 */
 static struct wxshadow_page *wxshadow_find_by_addr(void *mm, unsigned long addr)
 {
     struct list_head *pos;
@@ -768,6 +798,7 @@ not_found:
     return NULL;
 }
 
+/* [用途] 判断 stale brk 场景是否允许恢复 shadow 执行流。 */
 static bool wxshadow_can_resume_stale_brk(void *mm, unsigned long pc)
 {
     u64 *ptep;
@@ -793,6 +824,7 @@ static bool wxshadow_can_resume_stale_brk(void *mm, unsigned long pc)
     return insn != WXSHADOW_BRK_INSN;
 }
 
+/* [用途] brk in-flight 引用计数 put，归零时唤醒等待者。 */
 static void wxshadow_brk_inflight_put(struct wxshadow_page *page_info)
 {
     spin_lock(&global_lock);
@@ -802,6 +834,10 @@ static void wxshadow_brk_inflight_put(struct wxshadow_page *page_info)
 }
 
 /* BRK handler implementation (called with in-flight counter already incremented) */
+/*
+ * [用途] BRK 异常核心处理：切换 stepping 状态、应用寄存器改写并调整返回 PC。
+ * [输出] 0/非0 表示是否已由 wxshadow 接管本次异常。
+ */
 static int wxshadow_brk_handler_impl(struct pt_regs *regs, unsigned int esr)
 {
     unsigned long pc = regs->pc;
@@ -893,6 +929,7 @@ static int wxshadow_brk_handler_impl(struct pt_regs *regs, unsigned int esr)
     return DBG_HOOK_HANDLED;
 }
 
+/* [用途] BRK 异常对外入口。 */
 int wxshadow_brk_handler(struct pt_regs *regs, unsigned int esr)
 {
     int ret;
@@ -903,6 +940,7 @@ int wxshadow_brk_handler(struct pt_regs *regs, unsigned int esr)
 }
 
 /* Single-step handler implementation */
+/* [用途] 单步异常核心处理：完成 stepping 收敛并恢复 shadow 执行。 */
 static int wxshadow_step_handler_impl(struct pt_regs *regs, unsigned int esr)
 {
     void *mm = get_current_mm();
@@ -1004,6 +1042,7 @@ static int wxshadow_step_handler_impl(struct pt_regs *regs, unsigned int esr)
     return DBG_HOOK_HANDLED;
 }
 
+/* [用途] 单步异常对外入口。 */
 int wxshadow_step_handler(struct pt_regs *regs, unsigned int esr)
 {
     int ret;
@@ -1021,6 +1060,7 @@ int wxshadow_step_handler(struct pt_regs *regs, unsigned int esr)
 /*
  * brk_handler before hook
  */
+/* [用途] BRK 处理函数 hook 前置入口。 */
 void brk_handler_before(hook_fargs3_t *args, void *udata)
 {
     unsigned int esr = (unsigned int)args->arg1;
@@ -1046,6 +1086,7 @@ void brk_handler_before(hook_fargs3_t *args, void *udata)
 /*
  * single_step_handler before hook
  */
+/* [用途] single-step 处理函数 hook 前置入口。 */
 void single_step_handler_before(hook_fargs3_t *args, void *udata)
 {
     unsigned int esr = (unsigned int)args->arg1;

@@ -19,6 +19,7 @@ struct lookup_data {
     unsigned long addr;
 };
 
+/* [用途] kallsyms_on_each_symbol 回调：命中目标符号后记录地址并提前结束。 */
 static int lookup_callback(void *data, const char *name, struct module *mod, unsigned long addr)
 {
     struct lookup_data *ld = data;
@@ -34,6 +35,7 @@ static int lookup_callback(void *data, const char *name, struct module *mod, uns
  * This avoids potential hangs when module_kallsyms_lookup_name
  * traverses the kernel module list.
  */
+/* [用途] 安全符号查询：仅遍历 vmlinux 符号，找不到返回 0。 */
 static unsigned long lookup_name_safe(const char *name)
 {
     struct lookup_data ld = { .name = name, .addr = 0 };
@@ -63,6 +65,10 @@ static unsigned long lookup_name_safe(const char *name)
 
 /* ========== Symbol resolution ========== */
 
+/*
+ * [用途] 解析 wxshadow 运行需要的关键内核符号。
+ * [实现] 必选符号缺失则立即失败；可选符号用于能力增强和兼容回退。
+ */
 int resolve_symbols(void)
 {
     pr_info("wxshadow: resolving symbols...\n");
@@ -433,6 +439,7 @@ int resolve_symbols(void)
 /* ========== mm_struct offset scanning ========== */
 
 /* Check if a kernel address is valid and readable */
+/* [用途] 粗略判断地址是否是有效内核指针范围。 */
 static inline bool is_valid_kptr(unsigned long addr)
 {
     u64 tmp;
@@ -440,6 +447,7 @@ static inline bool is_valid_kptr(unsigned long addr)
 }
 
 /* Safely read a string (up to maxlen bytes) */
+/* [用途] 从可疑内核地址读取字符串并做基本安全校验。 */
 static inline bool safe_read_str(unsigned long addr, char *buf, size_t maxlen)
 {
     if (!is_kva(addr) || maxlen == 0)
@@ -459,8 +467,10 @@ static inline bool safe_read_str(unsigned long addr, char *buf, size_t maxlen)
     return true;
 }
 
+/* [用途] 自动检测 mm_struct 常用字段偏移。 */
 int scan_mm_struct_offsets(void)
 {
+    /* [实现] 依赖框架结果，当前仅做完整性校验。 */
     /*
      * Use KP framework's mm_struct_offset.pgd_offset (linux/mm_types.h)
      * Framework detects this in resolve_mm_struct_offset() at boot time.
@@ -478,6 +488,7 @@ int scan_mm_struct_offsets(void)
 
 /* ========== VMA offset scanning ========== */
 
+/* [用途] 自动检测 vm_area_struct 字段偏移。 */
 int scan_vma_struct_offsets(void)
 {
     void *mm;
@@ -506,7 +517,7 @@ int scan_vma_struct_offsets(void)
 
     pr_info("wxshadow: scanning VMA at %px for mm pointer %px\n", vma, mm);
 
-    /* Search for vm_mm field in vma_struct */
+    /* [实现] 在常见偏移范围内匹配与 mm 相等的指针，定位 vm_mm 字段。 */
     for (i = 0x10; i < 0x80; i += 8) {
         u64 val;
         if (!safe_read_u64((unsigned long)vma + i, &val))
@@ -541,11 +552,13 @@ use_default:
 #define TASK_STRUCT_MAX_SIZE 0x1800
 
 /* Find comm offset by searching for "swapper" or "swapper/0" in task_struct */
+/* [用途] 在 task_struct 内定位 comm 偏移，供任务遍历时识别进程名。 */
 static int find_comm_offset(void *task)
 {
     int i;
     char buf[16];
 
+    /* [实现] 通过匹配 \"swapper\" 特征字符串反推 comm 偏移。 */
     for (i = 0x400; i < TASK_STRUCT_MAX_SIZE; i += 4) {
         /* Safely read potential comm string */
         if (!safe_read_str((unsigned long)task + i, buf, sizeof(buf)))
@@ -565,6 +578,7 @@ static int find_comm_offset(void *task)
     return -1;
 }
 
+/* [用途] 扫描 task_struct 的 tasks/mm/comm 等关键偏移。 */
 int detect_task_struct_offsets(void)
 {
     int search_start, search_end;
@@ -627,6 +641,7 @@ int detect_task_struct_offsets(void)
     }
 
     /* Detect tasks_offset (not provided by framework) */
+    /* [实现] 先验 list_head 关系，再用 comm=\"init\" 验证候选 task。 */
     for (i = search_start; i < search_end; i += sizeof(u64)) {
         unsigned long list_addr = (unsigned long)wx_init_task + i;
         u64 next_va, prev_va;
@@ -683,6 +698,7 @@ int detect_task_struct_offsets(void)
      *   struct mm_struct *mm;        <- mm_offset
      *   struct mm_struct *active_mm; <- active_mm_offset
      */
+    /* [实现] 约束：mm 紧邻 active_mm 之前一个指针位。 */
     if (task_struct_offset.active_mm_offset > 0) {
         task_struct_offset.mm_offset = task_struct_offset.active_mm_offset - 8;
         pr_info("wxshadow: mm_offset = 0x%x (active_mm_offset - 8)\n",
@@ -715,6 +731,7 @@ int detect_task_struct_offsets(void)
  * Uses TCR_EL1.T0SZ and TG0 for user space address translation.
  * Returns: PA on success, 0 on failure
  */
+/* [用途] 手动 walk 页表，读取用户虚拟地址对应的 PTE/物理信息。 */
 static unsigned long walk_pgtable_uaddr(void *mm, unsigned long uaddr)
 {
     u64 *table;
@@ -736,6 +753,7 @@ static unsigned long walk_pgtable_uaddr(void *mm, unsigned long uaddr)
     t0sz = tcr & 0x3f;
     tg0 = (tcr >> 14) & 0x3;
 
+    /* [实现] 依据 TG0 动态确定页粒度和每级索引跨度。 */
     /* Decode TG0: 0=4KB, 1=64KB, 2=16KB */
     switch (tg0) {
     case 0:  /* 4KB */
@@ -759,6 +777,7 @@ static unsigned long walk_pgtable_uaddr(void *mm, unsigned long uaddr)
     levels = (va_bits - granule_shift + stride - 1) / stride;
     start_level = 4 - levels;
 
+    /* [实现] 通用多级 walk：逐级取描述符，直到命中 block/page 叶子。 */
     for (level = start_level; level <= 3; level++) {
         int shift = granule_shift + stride * (3 - level);
         int idx = (uaddr >> shift) & ((1 << stride) - 1);
@@ -793,6 +812,7 @@ static unsigned long walk_pgtable_uaddr(void *mm, unsigned long uaddr)
  * Check if address contains ELF magic by walking mm's page table.
  * Returns: true if ELF magic found, false otherwise
  */
+/* [用途] 检查用户地址处是否是 ELF 魔数，用于偏移猜测验证。 */
 static bool check_elf_magic_at_uaddr(void *mm, unsigned long uaddr, int mm_offset)
 {
     unsigned long pa, kva;
@@ -806,6 +826,7 @@ static bool check_elf_magic_at_uaddr(void *mm, unsigned long uaddr, int mm_offse
     if (uaddr == 0)
         return false;
 
+    /* [实现] user VA -> PA -> KVA，再读取前 4 字节验证 ELF 魔数。 */
     /* Walk mm's page table to translate user VA to PA */
     pa = walk_pgtable_uaddr(mm, uaddr);
     if (pa == 0) {
@@ -857,6 +878,7 @@ static bool check_elf_magic_at_uaddr(void *mm, unsigned long uaddr, int mm_offse
  *
  * Returns: context.id offset on success, -1 on failure
  */
+/* [用途] 借助 vdso ELF 特征推断 mm context 字段偏移。 */
 static int scan_by_vdso_elf_magic(struct mm_struct *mm)
 {
     int offset;
@@ -874,7 +896,7 @@ static int scan_by_vdso_elf_magic(struct mm_struct *mm)
     pr_info("wxshadow: search range: [0x%x, 0x%x)\n",
             pgd_off + 0x100, pgd_off + 0x400);
 
-    /* Search for vdso pointer after pgd */
+    /* [实现] 在 pgd 后方候选区搜索 user 指针，并验证其目标是否 ELF 头。 */
     for (offset = pgd_off + 0x100; offset < pgd_off + 0x400; offset += 8) {
         if (!safe_read_u64((unsigned long)mm + offset, &val))
             continue;
@@ -902,6 +924,7 @@ static int scan_by_vdso_elf_magic(struct mm_struct *mm)
  * Scan mm->context.id offset using TTBR0_EL1 ASID (primary method).
  * Returns: offset on success, -1 on failure, -2 if ASID=0
  */
+/* [用途] 通过 TTBR0/ASID 线索尝试推断 mm context.id 偏移。 */
 static int scan_by_ttbr0_asid(struct mm_struct *mm)
 {
     u64 ttbr0_val, asid;
@@ -921,7 +944,7 @@ static int scan_by_ttbr0_asid(struct mm_struct *mm)
         return -2;
     }
 
-    /* Search for context.id in mm_struct */
+    /* [实现] 主分支：匹配低 16 位 ASID。 */
     for (offset = 0x100; offset < 0x400; offset += 8) {
         u64 val;
         if (!safe_read_u64((unsigned long)mm + offset, &val))
@@ -935,7 +958,7 @@ static int scan_by_ttbr0_asid(struct mm_struct *mm)
         }
     }
 
-    /* Try alternative: ASID might be in higher bits */
+    /* [实现] 兼容分支：部分内核把 ASID 放在高位切片。 */
     for (offset = 0x100; offset < 0x400; offset += 8) {
         u64 val;
         if (!safe_read_u64((unsigned long)mm + offset, &val))
@@ -959,6 +982,7 @@ static int scan_by_ttbr0_asid(struct mm_struct *mm)
  *
  * Returns: offset on success, -1 on failure
  */
+/* [用途] 基于单个 mm 样本综合执行 context.id 偏移扫描。 */
 static int scan_mm_context_id_offset_from_mm(struct mm_struct *mm)
 {
     int offset;
@@ -985,6 +1009,7 @@ static int scan_mm_context_id_offset_from_mm(struct mm_struct *mm)
  * Get init process (pid 1) mm_struct.
  * Uses wx_init_process cached from task_struct detection.
  */
+/* [用途] 获取 init 进程 mm，作为扫描过程的稳定样本。 */
 static struct mm_struct *get_init_process_mm(void)
 {
     struct task_struct *init_proc;
@@ -1018,6 +1043,7 @@ static struct mm_struct *get_init_process_mm(void)
  *
  * Returns: 0 on success, -1 on failure (will retry later)
  */
+/* [用途] 对外扫描入口：串联多种策略定位 mm->context.id 偏移。 */
 int try_scan_mm_context_id_offset(void)
 {
     struct mm_struct *mm;
@@ -1075,6 +1101,7 @@ int try_scan_mm_context_id_offset(void)
 
 /* ========== Debug: print tasks list ========== */
 
+/* [用途] 调试辅助：打印任务链表前 N 项用于定位偏移问题。 */
 void debug_print_tasks_list(int max_count)
 {
     struct task_struct *p;
@@ -1122,6 +1149,7 @@ void debug_print_tasks_list(int max_count)
             safe_read_ptr((unsigned long)p + task_struct_offset.mm_offset, &mm);
         }
 
+        /* [实现] 调试输出仅观测任务链表状态，不参与功能决策。 */
         pr_info("wxshadow: [%d] task=%px pid=%d tgid=%d mm=%px comm=\"%.16s\"\n",
                 count, p, pid, tgid, mm, comm ? comm : "(null)");
 

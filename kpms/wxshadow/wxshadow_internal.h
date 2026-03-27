@@ -31,6 +31,7 @@
 
 /* ========== ARM64 CPU helpers ========== */
 
+/* [用途] 轻量让出执行管线，供自旋等待路径降低总线压力。 */
 static inline void cpu_relax(void)
 {
     asm volatile("yield" ::: "memory");
@@ -67,6 +68,7 @@ static inline void wxshadow_page_pte_unlock(struct wxshadow_page *page)
  * This is pointer arithmetic, which multiplies by sizeof(struct list_head)=16.
  * Correct implementation uses (char*) for byte-level offset.
  */
+/* [用途] 修正后的 next_task：按字节偏移遍历 tasks 链表。 */
 static inline struct task_struct *wx_next_task(struct task_struct *task)
 {
     struct list_head *head = (struct list_head *)((char *)task + task_struct_offset.tasks_offset);
@@ -76,27 +78,27 @@ static inline struct task_struct *wx_next_task(struct task_struct *task)
 
 /* ========== Kernel function pointers ========== */
 
-/* Memory management */
+/* [用途] 内存管理核心符号（VMA 查询 / mm 引用获取与释放）。 */
 extern void *(*kfunc_find_vma)(void *mm, unsigned long addr);
 extern void *(*kfunc_get_task_mm)(void *task);
 extern void (*kfunc_mmput)(void *mm);
 /* find_task_by_vpid: use find_task_by_vpid() from linux/sched.h */
 
-/* exit_mmap hook */
+/* [用途] 进程地址空间退出回调符号（用于 teardown 对接）。 */
 extern void *kfunc_exit_mmap;
 
-/* Page allocation */
+/* [用途] shadow 页分配与释放接口。 */
 extern unsigned long (*kfunc___get_free_pages)(unsigned int gfp_mask, unsigned int order);
 extern void (*kfunc_free_pages)(unsigned long addr, unsigned int order);
 
-/* Address translation */
+/* [用途] 物理/虚拟地址换算基准符号。 */
 extern s64 *kvar_memstart_addr;
 extern s64 *kvar_physvirt_offset;
 extern unsigned long page_offset_base;
 extern s64 detected_physvirt_offset;
 extern int physvirt_offset_valid;
 
-/* Page table config */
+/* [用途] 运行时页表层级参数（3/4 级 + page shift）。 */
 extern int wx_page_shift;
 extern int wx_page_level;
 
@@ -129,64 +131,64 @@ extern void wxfunc_def(_raw_spin_unlock)(raw_spinlock_t *lock);
 #define spin_lock(lock) raw_spin_lock(&(lock)->rlock)
 #define spin_unlock(lock) raw_spin_unlock(&(lock)->rlock)
 
-/* Task functions */
+/* [用途] 任务查询与 pid/tgid 解析接口。 */
 extern struct task_struct *wxfunc_def(find_task_by_vpid)(pid_t nr);
 extern pid_t wxfunc_def(__task_pid_nr_ns)(struct task_struct *task, enum pid_type type, struct pid_namespace *ns);
 
 /* init_task - looked up via kallsyms since framework doesn't export it */
 extern struct task_struct *wx_init_task;
 
-/* Cache operations */
+/* [用途] cache 同步相关接口。 */
 extern void (*kfunc_flush_dcache_page)(void *page);
 extern void (*kfunc___flush_icache_range)(unsigned long start, unsigned long end);
 
-/* Debug/ptrace */
+/* [用途] 单步控制接口（断点处理后恢复执行流）。 */
 extern void (*kfunc_user_enable_single_step)(void *task);
 extern void (*kfunc_user_disable_single_step)(void *task);
 
-/* Direct handler hook */
+/* [用途] 直接 hook 模式下的 brk/step 目标符号。 */
 extern void *kfunc_brk_handler;
 extern void *kfunc_single_step_handler;
 
-/* register_user_*_hook API (fallback) */
+/* [用途] register hook 模式接口（直接 hook 不可用时回退）。 */
 extern void (*kfunc_register_user_break_hook)(struct wx_break_hook *hook);
 extern void (*kfunc_register_user_step_hook)(struct wx_step_hook *hook);
 extern spinlock_t *kptr_debug_hook_lock;
 
 /* Locking - NOT USED (lockless operation) */
 
-/* RCU */
+/* [用途] RCU 相关同步接口（卸载/并发路径使用）。 */
 extern void (*kfunc_rcu_read_lock)(void);
 extern void (*kfunc_rcu_read_unlock)(void);
 extern void (*kfunc_synchronize_rcu)(void);
 extern void (*kfunc_kick_all_cpus_sync)(void);
 
-/* Memory allocation */
+/* [用途] 内核内存分配接口（patch 元数据/页对象等）。 */
 extern void *(*kfunc_kzalloc)(size_t size, unsigned int flags);
 extern void *(*kfunc_kcalloc)(size_t n, size_t size, unsigned int flags);
 extern void (*kfunc_kfree)(void *ptr);
 
-/* Safe memory access */
+/* [用途] nofault 读取接口（扫描与安全读取路径）。 */
 extern long (*kfunc_copy_from_kernel_nofault)(void *dst, const void *src, size_t size);
 
-/* do_page_fault hook */
+/* [用途] 缺页处理 hook 目标符号。 */
 extern void *kfunc_do_page_fault;
 
-/* follow_page_pte hook (GUP hiding) */
+/* [用途] GUP 路径 hook 目标符号（隐藏 shadow 映射）。 */
 extern void *kfunc_follow_page_pte;
 
-/* fork protection hooks */
+/* [用途] fork 复制路径 hook 符号（父子映射一致性保护）。 */
 extern void *kfunc_dup_mmap;
 extern void *kfunc_uprobe_dup_mmap;
 extern void *kfunc_copy_process;
 extern void *kfunc_cgroup_post_fork;
 
-/* TLB flush */
+/* [用途] TLB 刷新接口（优先内核函数，失败时再走 TLBI）。 */
 extern void (*kfunc_flush_tlb_page)(void *vma, unsigned long uaddr);
 extern void (*kfunc___flush_tlb_range)(void *vma, unsigned long start, unsigned long end,
                                         unsigned long stride, bool last_level, int tlb_level);
 
-/* THP split */
+/* [用途] THP block 拆分接口（确保可拿到末级 PTE）。 */
 extern void (*kfunc___split_huge_pmd)(void *vma, void *pmd, unsigned long address,
                                        bool freeze, void *page);
 
@@ -264,6 +266,7 @@ static inline bool is_permission_fault(unsigned int esr)
     return (fsc & 0x3C) == 0x0C;
 }
 
+/* [用途] fault 分类结果：驱动 read/exec/write 三种处理分支。 */
 enum wxshadow_fault_access {
     WXSHADOW_FAULT_NONE = 0,
     WXSHADOW_FAULT_EXEC,
@@ -271,6 +274,7 @@ enum wxshadow_fault_access {
     WXSHADOW_FAULT_WRITE,
 };
 
+/* [用途] 从 ESR 解析权限 fault 类型，过滤非目标异常。 */
 static inline enum wxshadow_fault_access
 wxshadow_classify_permission_fault(unsigned int esr)
 {
@@ -311,6 +315,7 @@ wxshadow_classify_permission_fault(unsigned int esr)
  * is_kva - check if address is a valid kernel virtual address
  * ARM64 TTBR1 addresses have high 16 bits set to 0xffff
  */
+/* [用途] 判断地址是否位于 ARM64 TTBR1 内核虚拟地址空间。 */
 static inline bool is_kva(unsigned long addr)
 {
     return (addr >> 48) == 0xffff;
@@ -323,6 +328,7 @@ static inline bool is_kva(unsigned long addr)
  * Returns true on success, false if address is invalid or unreadable
  * Note: kfunc_copy_from_kernel_nofault is declared later in this file
  */
+/* [用途] 安全读取内核地址上的 u64，优先走 nofault 接口。 */
 static inline bool safe_read_u64(unsigned long addr, u64 *out)
 {
     extern long (*kfunc_copy_from_kernel_nofault)(void *dst, const void *src, size_t size);
@@ -343,6 +349,7 @@ static inline bool safe_read_u64(unsigned long addr, u64 *out)
 /*
  * safe_read_ptr - safely read a pointer from kernel memory
  */
+/* [用途] 安全读取指针值（复用 safe_read_u64）。 */
 static inline bool safe_read_ptr(unsigned long addr, void **out)
 {
     return safe_read_u64(addr, (u64 *)out);
@@ -356,6 +363,7 @@ static inline bool safe_read_ptr(unsigned long addr, void **out)
 #define GET_FIELD(ptr, offset, type) (*(type *)((char *)(ptr) + (offset)))
 #define SET_FIELD(ptr, offset, type, val) (*(type *)((char *)(ptr) + (offset)) = (val))
 
+/* [用途] 通过动态偏移读取 vma->vm_mm。 */
 static inline void *vma_mm(void *vma) {
     if (vma_vm_mm_offset < 0) {
         pr_err("wxshadow: vma_vm_mm_offset not initialized!\n");
@@ -364,14 +372,17 @@ static inline void *vma_mm(void *vma) {
     return GET_FIELD(vma, vma_vm_mm_offset, void *);
 }
 
+/* [用途] 读取 vma 起始地址。 */
 static inline unsigned long vma_start(void *vma) {
     return GET_FIELD(vma, VMA_VM_START_OFFSET, unsigned long);
 }
 
+/* [用途] 读取 vma 结束地址。 */
 static inline unsigned long vma_end(void *vma) {
     return GET_FIELD(vma, VMA_VM_END_OFFSET, unsigned long);
 }
 
+/* [用途] 通过框架检测到的偏移读取 mm->pgd。 */
 static inline void *mm_pgd(void *mm) {
     /* Use KP framework's mm_struct_offset.pgd_offset (linux/mm_types.h) */
     if (mm_struct_offset.pgd_offset < 0) {
@@ -385,6 +396,7 @@ static inline void *mm_pgd(void *mm) {
 
 /* ========== Safe kcalloc wrapper ========== */
 
+/* [用途] 安全分配数组：优先 kcalloc，退化时做乘法溢出保护。 */
 static inline void *safe_kcalloc(size_t n, size_t size, unsigned int flags)
 {
     if (kfunc_kcalloc)
@@ -396,6 +408,7 @@ static inline void *safe_kcalloc(size_t n, size_t size, unsigned int flags)
 
 /* ========== Address translation ========== */
 
+/* [用途] 通过 AT 指令做一次地址翻译，获取物理地址。 */
 static inline unsigned long vaddr_to_paddr_at(unsigned long vaddr)
 {
     u64 par;
@@ -407,6 +420,7 @@ static inline unsigned long vaddr_to_paddr_at(unsigned long vaddr)
     return (par & 0x0000FFFFFFFFF000UL) | (vaddr & 0xFFF);
 }
 
+/* [用途] 按运行时检测的偏移把 PA 转为 KVA。 */
 static inline unsigned long phys_to_virt_safe(unsigned long pa)
 {
     if (physvirt_offset_valid)
@@ -417,6 +431,7 @@ static inline unsigned long phys_to_virt_safe(unsigned long pa)
         return (pa - *kvar_memstart_addr) + page_offset_base;
 }
 
+/* [用途] KVA -> PA 逆向换算。 */
 static inline unsigned long kaddr_to_phys(unsigned long vaddr)
 {
     if (physvirt_offset_valid)
@@ -427,11 +442,13 @@ static inline unsigned long kaddr_to_phys(unsigned long vaddr)
         return (vaddr - page_offset_base) + *kvar_memstart_addr;
 }
 
+/* [用途] KVA -> PFN 换算。 */
 static inline unsigned long kaddr_to_pfn(unsigned long vaddr)
 {
     return kaddr_to_phys(vaddr) >> PAGE_SHIFT;
 }
 
+/* [用途] PFN -> KVA 换算。 */
 static inline void *pfn_to_kaddr(unsigned long pfn)
 {
     unsigned long pa = pfn << PAGE_SHIFT;
@@ -456,6 +473,7 @@ static inline void *pfn_to_kaddr(unsigned long pfn)
  *  - dcache is PIPT, so cleaning by kernel VA cleans the same physical line
  *    that instruction fetch via user VA will access.
  */
+/* [用途] 清理内核地址范围 dcache 到 PoU，保证后续指令可见。 */
 static inline void wxshadow_flush_kern_dcache_area(unsigned long kva, unsigned long size)
 {
     unsigned long addr, end;
@@ -472,6 +490,7 @@ static inline void wxshadow_flush_kern_dcache_area(unsigned long kva, unsigned l
     asm volatile("dsb ish" : : : "memory");
 }
 
+/* [用途] 刷新 icache 区间，确保新写入指令可执行。 */
 static inline void wxshadow_flush_icache_range(unsigned long start, unsigned long end)
 {
     if (kfunc___flush_icache_range) {
@@ -485,6 +504,7 @@ static inline void wxshadow_flush_icache_range(unsigned long start, unsigned lon
     asm volatile("isb" : : : "memory");
 }
 
+/* [用途] 以页为粒度刷新 icache。 */
 static inline void wxshadow_flush_icache_page(unsigned long addr)
 {
     wxshadow_flush_icache_range(addr & PAGE_MASK, (addr & PAGE_MASK) + PAGE_SIZE);

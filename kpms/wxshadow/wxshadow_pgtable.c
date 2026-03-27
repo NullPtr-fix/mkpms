@@ -14,6 +14,7 @@
 /*
  * pte_index - calculate PTE index from address
  */
+/* [用途] 计算虚拟地址在 PTE 页中的索引。 */
 static inline unsigned long pte_index(unsigned long addr)
 {
     return (addr >> PAGE_SHIFT) & (512 - 1);  /* PTRS_PER_PTE = 512 for 4K pages */
@@ -27,6 +28,7 @@ static inline unsigned long pte_index(unsigned long addr)
  *   PMD: bits 29:21 (pmd_shift = 21)
  *   PTE: bits 20:12 (pte_shift = 12)
  */
+/* [用途] 计算 PGD 索引（按运行时页级参数）。 */
 static inline unsigned long pgd_index(unsigned long addr)
 {
     int pxd_bits = wx_page_shift - 3;
@@ -34,6 +36,7 @@ static inline unsigned long pgd_index(unsigned long addr)
     return (addr >> pgdir_shift) & ((1UL << pxd_bits) - 1);
 }
 
+/* [用途] 计算 PUD 索引（4 级页表场景）。 */
 static inline unsigned long pud_index(unsigned long addr)
 {
     int pxd_bits = wx_page_shift - 3;
@@ -41,6 +44,7 @@ static inline unsigned long pud_index(unsigned long addr)
     return (addr >> pud_shift) & ((1UL << pxd_bits) - 1);
 }
 
+/* [用途] 计算 PMD 索引。 */
 static inline unsigned long pmd_index(unsigned long addr)
 {
     int pxd_bits = wx_page_shift - 3;
@@ -54,11 +58,13 @@ static inline unsigned long pmd_index(unsigned long addr)
 #define PXD_TYPE_SECT   0x1UL   /* Block/Section entry */
 #define PXD_TYPE_TABLE  0x3UL   /* Table entry */
 
+/* [用途] 判断 PMD 是否 block/section 映射。 */
 static inline bool pmd_sect(u64 pmd)
 {
     return (pmd & PXD_TYPE_MASK) == PXD_TYPE_SECT;
 }
 
+/* [用途] 判断 PMD 是否指向下一层页表。 */
 static inline bool pmd_table(u64 pmd)
 {
     return (pmd & PXD_TYPE_MASK) == PXD_TYPE_TABLE;
@@ -67,6 +73,7 @@ static inline bool pmd_table(u64 pmd)
 /*
  * pxd_page_vaddr - get virtual address of next-level table from page table entry
  */
+/* [用途] 从页表描述符提取下一层页表基址并转为 KVA。 */
 static inline unsigned long pxd_page_vaddr(u64 pxd_val)
 {
     unsigned long pa = pxd_val & 0x0000FFFFFFFFF000UL;
@@ -78,6 +85,7 @@ static inline unsigned long pxd_page_vaddr(u64 pxd_val)
 /*
  * wxshadow_pgd_offset - get PGD entry pointer for address
  */
+/* [用途] 获取目标地址对应 PGD 项指针。 */
 static inline void *wxshadow_pgd_offset(void *mm, unsigned long addr)
 {
     void *pgd = mm_pgd(mm);
@@ -88,6 +96,7 @@ static inline void *wxshadow_pgd_offset(void *mm, unsigned long addr)
 /*
  * wxshadow_pud_offset - get PUD entry pointer from P4D/PGD entry
  */
+/* [用途] 从上层项推导 PUD 项指针。 */
 static inline void *wxshadow_pud_offset(void *p4d, unsigned long addr)
 {
     u64 p4d_val;
@@ -110,6 +119,7 @@ static inline void *wxshadow_pud_offset(void *p4d, unsigned long addr)
 /*
  * wxshadow_pmd_offset - get PMD entry pointer from PUD entry
  */
+/* [用途] 从 PUD 项推导 PMD 项指针。 */
 static inline void *wxshadow_pmd_offset(void *pud, unsigned long addr)
 {
     u64 pud_val;
@@ -133,6 +143,7 @@ static inline void *wxshadow_pmd_offset(void *pud, unsigned long addr)
 /*
  * pmd_page_vaddr - get virtual address of PTE table from PMD entry
  */
+/* [用途] 从 PMD 描述符提取 PTE 表基址并转为 KVA。 */
 static inline unsigned long pmd_page_vaddr(u64 pmd)
 {
     unsigned long pa = pmd & 0x0000FFFFFFFFF000UL;
@@ -142,6 +153,7 @@ static inline unsigned long pmd_page_vaddr(u64 pmd)
 /*
  * pte_offset_kernel_local - get PTE pointer from PMD
  */
+/* [用途] 获取目标地址对应 PTE 指针（内核可访问地址）。 */
 static inline u64 *pte_offset_kernel_local(void *pmd, unsigned long addr)
 {
     u64 pmd_val;
@@ -182,6 +194,7 @@ int wxshadow_try_split_pmd(void *mm, void *vma, unsigned long addr)
     if (!mm || !vma)
         return 0;
 
+    /* [实现] 先 walk 到 PMD，再判定是否 block 映射并按需 split。 */
     /* Walk page tables to PMD level */
     pgd = wxshadow_pgd_offset(mm, addr);
     if (!pgd || !is_kva((unsigned long)pgd))
@@ -252,6 +265,7 @@ u64 *get_user_pte(void *mm, unsigned long addr, void **ptlp)
     u64 *pte;
     u64 pgd_val, pud_val, pmd_val;
 
+    /* [实现] 逐级 walk 页表并校验类型，最终返回可写的 PTE 指针。 */
     pgd = wxshadow_pgd_offset(mm, addr);
     if (!pgd || !is_kva((unsigned long)pgd))
         return NULL;
@@ -307,6 +321,7 @@ u64 *get_user_pte(void *mm, unsigned long addr, void **ptlp)
 /*
  * Release PTE (no-op in lockless mode)
  */
+/* [用途] 对齐通用接口；当前实现无锁，故 unmap/unlock 为 no-op。 */
 void pte_unmap_unlock(u64 *pte, void *ptl)
 {
     (void)pte;
@@ -438,12 +453,14 @@ void wxshadow_flush_tlb_page(void *vma, unsigned long uaddr)
 }
 
 /* Build a PTE value */
+/* [用途] 用 PFN + 保护位组装标准用户页 PTE。 */
 u64 make_pte(unsigned long pfn, u64 prot)
 {
     return (pfn << PAGE_SHIFT) | prot | PTE_VALID | PTE_TYPE_PAGE |
            PTE_AF | PTE_SHARED | PTE_NG | PTE_ATTRINDX_NORMAL;
 }
 
+/* [用途] 在保留 PTE 其余位的前提下替换 PFN 字段。 */
 static inline u64 wxshadow_replace_pte_pfn(u64 pte_template,
                                            unsigned long pfn)
 {
@@ -455,6 +472,7 @@ static inline u64 wxshadow_replace_pte_pfn(u64 pte_template,
     return entry;
 }
 
+/* [用途] 获取“原始页”PTE 模板，优先复用首次捕获的 pte_original。 */
 static inline u64 wxshadow_get_original_pte_template(
     struct wxshadow_page *page)
 {
@@ -465,12 +483,14 @@ static inline u64 wxshadow_get_original_pte_template(
     return 0;
 }
 
+/* [用途] 构造恢复原始映射使用的 PTE。 */
 static inline u64 wxshadow_build_restore_original_pte(
     struct wxshadow_page *page)
 {
     return wxshadow_get_original_pte_template(page);
 }
 
+/* [用途] 构造“隐藏模式”原页 PTE：用户可读、不可执行。 */
 static inline u64 wxshadow_build_hidden_original_pte(
     struct wxshadow_page *page)
 {
@@ -484,6 +504,7 @@ static inline u64 wxshadow_build_hidden_original_pte(
     return entry;
 }
 
+/* [用途] 构造单步模式原页 PTE：临时允许执行原页用于 stepping。 */
 static inline u64 wxshadow_build_stepping_original_pte(
     struct wxshadow_page *page)
 {
@@ -498,6 +519,7 @@ static inline u64 wxshadow_build_stepping_original_pte(
     return entry;
 }
 
+/* [用途] 最底层 PTE 写入 helper，可选刷新 TLB。 */
 static int wxshadow_write_pte_raw(void *mm, void *vma, unsigned long addr,
                                   u64 *ptep, u64 pte, bool flush_tlb)
 {
@@ -518,6 +540,7 @@ static int wxshadow_write_pte_raw(void *mm, void *vma, unsigned long addr,
     return 0;
 }
 
+/* [用途] 统一 page 级加锁场景下的 PTE 写入入口。 */
 static int wxshadow_page_write_pte_locked(struct wxshadow_page *page, void *mm,
                                           void *vma, unsigned long addr,
                                           u64 *ptep, u64 pte, bool flush_tlb)
@@ -528,6 +551,10 @@ static int wxshadow_page_write_pte_locked(struct wxshadow_page *page, void *mm,
     return wxshadow_write_pte_raw(mm, vma, addr, ptep, pte, flush_tlb);
 }
 
+/*
+ * [用途] 在同一地址上切换映射目标 PFN（原页/影子页）。
+ * [实现] 重新取 PTE 后写入新 entry，并刷新单页 TLB。
+ */
 static int wxshadow_page_switch_mapping_locked(struct wxshadow_page *page,
                                                void *vma, unsigned long addr,
                                                unsigned long target_pfn,
@@ -556,6 +583,7 @@ static int wxshadow_page_switch_mapping_locked(struct wxshadow_page *page,
                                           true);
 }
 
+/* [用途] 激活影子页映射（锁内版本）。 */
 int wxshadow_page_activate_shadow_locked(struct wxshadow_page *page, void *vma,
                                          unsigned long addr)
 {
@@ -586,6 +614,7 @@ int wxshadow_page_activate_shadow_locked(struct wxshadow_page *page, void *vma,
     return ret;
 }
 
+/* [用途] 激活影子页映射（对外入口，负责 pte_lock 生命周期）。 */
 int wxshadow_page_activate_shadow(struct wxshadow_page *page, void *vma,
                                   unsigned long addr)
 {
@@ -601,6 +630,7 @@ int wxshadow_page_activate_shadow(struct wxshadow_page *page, void *vma,
     return ret;
 }
 
+/* [用途] 从 SHADOW_X 切换到 ORIGINAL（隐藏读取视图）。 */
 int wxshadow_page_enter_original(struct wxshadow_page *page, void *vma,
                                  unsigned long addr)
 {
@@ -643,6 +673,7 @@ int wxshadow_page_enter_original(struct wxshadow_page *page, void *vma,
     return ret;
 }
 
+/* [用途] 从 ORIGINAL 恢复到 SHADOW_X。 */
 int wxshadow_page_resume_shadow(struct wxshadow_page *page, void *vma,
                                 unsigned long addr)
 {
@@ -679,6 +710,10 @@ int wxshadow_page_resume_shadow(struct wxshadow_page *page, void *vma,
     return ret;
 }
 
+/*
+ * [用途] 进入单步态：把当前页暂切回原页可执行并标记 stepping_task。
+ * [并发] 依赖 global_lock + page->pte_lock 双层保护状态一致性。
+ */
 int wxshadow_page_begin_stepping(struct wxshadow_page *page, void *vma,
                                  unsigned long addr, void *task)
 {
@@ -736,6 +771,10 @@ int wxshadow_page_begin_stepping(struct wxshadow_page *page, void *vma,
     return ret;
 }
 
+/*
+ * [用途] 结束单步态：按 release_pending/logical_release_pending/普通恢复 三分支收敛。
+ * [输出] 1 表示“完成并释放/休眠”，0 表示普通恢复成功，负值为失败。
+ */
 int wxshadow_page_finish_stepping(struct wxshadow_page *page, void *vma,
                                   unsigned long addr, void *task)
 {
@@ -859,6 +898,7 @@ int wxshadow_page_finish_stepping(struct wxshadow_page *page, void *vma,
     return ret;
 }
 
+/* [用途] 把页面切到 DORMANT（恢复原始映射并清 stepping_task）。 */
 int wxshadow_page_enter_dormant_locked(struct wxshadow_page *page, void *vma,
                                        unsigned long addr)
 {
@@ -888,6 +928,7 @@ int wxshadow_page_enter_dormant_locked(struct wxshadow_page *page, void *vma,
     return ret;
 }
 
+/* [用途] teardown 前强制恢复原始映射，确保后续回收安全。 */
 int wxshadow_page_restore_original_for_teardown_locked(
     struct wxshadow_page *page, void *vma, unsigned long addr)
 {
@@ -910,6 +951,10 @@ int wxshadow_page_restore_original_for_teardown_locked(
     return ret;
 }
 
+/*
+ * [用途] GUP 隐藏阶段开始：临时把 shadow 映射替换成 original 映射。
+ * [输出] 返回原始 pte 指针和值，供 finish 阶段恢复。
+ */
 int wxshadow_page_begin_gup_hide(struct wxshadow_page *page, void *mm,
                                  unsigned long addr, u64 **out_ptep,
                                  u64 *out_orig_pte)
@@ -970,6 +1015,7 @@ int wxshadow_page_begin_gup_hide(struct wxshadow_page *page, void *mm,
     return 0;
 }
 
+/* [用途] GUP 隐藏阶段结束：恢复 begin 阶段保存的原 PTE 值。 */
 int wxshadow_page_finish_gup_hide(struct wxshadow_page *page, void *vma,
                                   unsigned long addr, u64 *ptep, u64 orig_pte)
 {
@@ -998,6 +1044,7 @@ out_unlock:
     return ret;
 }
 
+/* [用途] fork 子进程场景：恢复 child mm 的 original 映射。 */
 int wxshadow_page_restore_child_original_locked(struct wxshadow_page *page,
                                                 void *child_mm,
                                                 unsigned long addr)

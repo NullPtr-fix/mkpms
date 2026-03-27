@@ -23,6 +23,12 @@ git config submodule.recurse true 自动更新submodule
 # 更新
 * 配合rustfrida实现java、native hook
 * https://bbs.kanxue.com/thread-290304.htm#msg_header_h2_5
+
+## 代码注释与分析
+
+- 代码全量注释方案与函数点位索引：`docs/CODE_ANNOTATION_PLAN.md`
+- 注释推进看板：`docs/ANNOTATION_PROGRESS.md`
+
 ## 交流群
 
 ![wxshadow 微信群](image.png)
